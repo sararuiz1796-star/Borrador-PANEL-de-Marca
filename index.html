@@ -7,9 +7,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<title>VintageCam · Filtros Retro</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%B7%3C/text%3E%3C/svg%3E">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>Glint! · Filtros Retro</title>
+<link rel="icon" type="image/png" href="assets/glint-icon-180.png">
+<link rel="apple-touch-icon" href="assets/glint-icon-512.png">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Baloo+2:wght@700;800&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
 html,body{height:100%;background:#050403}
@@ -235,9 +236,36 @@ button{font-family:inherit;}
   font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;
 }
 .et-tab.active{color:#E8A857}
+
+/* ── GLINT! SPLASH ── */
+.splash{
+  position:fixed;inset:0;z-index:100;
+  background:#F5EFE4;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
+  transition:opacity .5s ease, visibility .5s;
+}
+.splash img{width:38vw;max-width:190px;display:block}
+.splash-word{
+  font-family:'Baloo 2',sans-serif;font-weight:800;font-style:italic;
+  font-size:clamp(28px,9vw,44px);line-height:1;color:#1E3FA0;letter-spacing:-.01em;
+}
+.splash.fade-out{opacity:0;visibility:hidden}
+
+/* ── BRAND MARK ── */
+.brand-mark{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.brand-mark img{width:20px;height:20px;border-radius:5px;display:block}
+.brand-mark span{
+  font-family:'Baloo 2',sans-serif;font-weight:800;font-style:italic;
+  font-size:15px;color:#1E3FA0;
+}
 </style>
 </head>
 <body>
+
+<div class="splash" id="splash">
+  <img src="assets/glint-icon-512.png" alt="Glint!">
+  <div class="splash-word">Glint!</div>
+</div>
 
 <div id="app">
 
@@ -292,6 +320,7 @@ button{font-family:inherit;}
   <section class="screen" data-screen="gallery">
     <div class="gallery-header">
       <div>
+        <div class="brand-mark"><img src="assets/glint-icon-180.png" alt=""><span>Glint!</span></div>
         <h1>Galería</h1>
         <div class="gallery-count" id="galleryCount">0 fotos</div>
       </div>
@@ -1258,9 +1287,17 @@ async function init(){
   buildFrameTray();
   buildFilterTrayEditor();
   wireEvents();
+  const minSplash = new Promise(r => setTimeout(r, 1000));
   await detectMultipleCameras();
   await startCamera(currentFacing);
   refreshGalleryThumb();
+  await minSplash;
+  hideSplash();
+}
+function hideSplash(){
+  const splash = $('splash');
+  splash.classList.add('fade-out');
+  setTimeout(() => splash.remove(), 550);
 }
 document.addEventListener('DOMContentLoaded', init);
 
