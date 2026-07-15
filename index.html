@@ -66,8 +66,14 @@ button{font-family:inherit;}
   font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
   color:#E8A857;background:rgba(5,4,3,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   padding:8px 16px;border-radius:99px;border:1px solid rgba(232,168,87,.3);
-  pointer-events:none;
+  cursor:pointer;transition:background .15s, border-color .15s;
 }
+.filter-name-badge.active-state{background:rgba(232,168,87,.3);border-color:rgba(232,168,87,.6)}
+
+.live-adjust-panel{
+  flex-shrink:0;overflow:hidden;max-height:0;transition:max-height .25s ease;background:#050403;
+}
+.live-adjust-panel.open{max-height:190px;padding:8px 14px 10px}
 
 .import-badge{
   position:absolute;top:66px;left:0;right:0;z-index:5;
@@ -301,8 +307,9 @@ button{font-family:inherit;}
           <button class="icon-btn" id="btnFlash" title="Flash">⚡</button>
           <button class="icon-btn" id="btnImport" title="Importar foto">🖼️</button>
         </div>
-        <div class="filter-name-badge" id="filterNameBadge">ORIGINAL</div>
+        <button class="filter-name-badge" id="filterNameBadge" title="Ajustar"><span id="filterNameText">ORIGINAL</span> ▾</button>
         <div class="tc-group">
+          <button class="icon-btn" id="btnAdjustToggle" title="Ajustes">🎚️</button>
           <button class="icon-btn" id="btnSwitchCam" title="Cambiar cámara">⟲</button>
         </div>
       </div>
@@ -324,6 +331,10 @@ button{font-family:inherit;}
           <button class="pm-btn" id="btnImportFallback">Importar foto</button>
         </div>
       </div>
+    </div>
+
+    <div class="live-adjust-panel" id="liveAdjustPanel">
+      <div class="ep-adjust-grid" id="liveAdjustGrid"></div>
     </div>
 
     <div class="filter-strip" id="filterStrip"></div>
@@ -424,12 +435,13 @@ const FILTERS = [
 const $ = id => document.getElementById(id);
 const video = $('video'), canvas = $('canvas'), ctx = canvas.getContext('2d');
 const viewfinder = $('viewfinder'), flashLayer = $('flashLayer');
-const filterStrip = $('filterStrip'), filterNameBadge = $('filterNameBadge');
+const filterStrip = $('filterStrip'), filterNameBadge = $('filterNameBadge'), filterNameText = $('filterNameText');
 const permissionMsg = $('permissionMsg'), permissionMsgText = $('permissionMsgText');
 const importBadge = $('importBadge'), fileInput = $('fileInput');
 const galleryGrid = $('galleryGrid'), galleryEmpty = $('galleryEmpty'), galleryCount = $('galleryCount');
 const viewer = $('viewer'), viewerImg = $('viewerImg');
 const btnGalleryThumb = $('btnGalleryThumb'), btnFlash = $('btnFlash'), btnSwitchCam = $('btnSwitchCam');
+const btnAdjustToggle = $('btnAdjustToggle'), liveAdjustPanel = $('liveAdjustPanel'), liveAdjustGrid = $('liveAdjustGrid');
 const quickEditChip = $('quickEditChip');
 const editorCanvas = $('editorCanvas'), editorCtx = editorCanvas.getContext('2d');
 const editorStage = $('editorStage');
@@ -444,6 +456,8 @@ let sourceIsVideo = true, currentSource = video;
 let overlays = {}, grainPattern = null, lastW = 0, lastH = 0, hasMultipleCams = false;
 let viewerPhotoId = null, viewerObjectUrl = null, viewerPhotoFilterName = null;
 let quickEditBlob = null, quickEditTimeout = null;
+let liveAdjust = { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 };
+let liveGrainOffset = { x: 0, y: 0 }, lastGrainUpdate = 0;
 
 const currentFilter = () => FILTERS[currentFilterIndex];
 
@@ -587,8 +601,8 @@ function makeGrainTile(){
   const fg = fine.getContext('2d');
   const fid = fg.createImageData(size, size);
   for(let i = 0; i < fid.data.length; i += 4){
-    const v = 128 + (Math.random() - 0.5) * 95;
-    fid.data[i] = v; fid.data[i+1] = v; fid.data[i+2] = v; fid.data[i+3] = 130;
+    const v = 128 + (Math.random() - 0.5) * 78;
+    fid.data[i] = v; fid.data[i+1] = v; fid.data[i+2] = v; fid.data[i+3] = 120;
   }
   fg.putImageData(fid, 0, 0);
   g.drawImage(fine, 0, 0);
@@ -647,7 +661,16 @@ function applyPostEffects(c, w, h, f, ov, opts){
     c.save();
     c.globalAlpha = f.grain; c.globalCompositeOperation = 'overlay';
     let gx, gy;
-    if(opts.animate){ gx = Math.random() * 180; gy = Math.random() * 180; }
+    if(opts.animate){
+      // real film grain flickers a handful of times per second, not every 60fps frame —
+      // updating every frame reads as scrolling TV static/rain instead
+      const now = opts.time || 0;
+      if(now - lastGrainUpdate > 90){
+        liveGrainOffset.x = Math.random() * 180; liveGrainOffset.y = Math.random() * 180;
+        lastGrainUpdate = now;
+      }
+      gx = liveGrainOffset.x; gy = liveGrainOffset.y;
+    }
     else { gx = (opts.grainSeed && opts.grainSeed.x) || 0; gy = (opts.grainSeed && opts.grainSeed.y) || 0; }
     c.translate(gx, gy);
     c.fillStyle = ov.grainPattern;
@@ -660,7 +683,7 @@ function applyPostEffects(c, w, h, f, ov, opts){
 function drawFrame(time){
   const w = canvas.width, h = canvas.height;
   if(w === 0 || h === 0) return;
-  const f = currentFilter();
+  const f = getEffectiveFilter(currentFilter(), liveAdjust);
 
   const sw = sourceIsVideo ? video.videoWidth : currentSource.naturalWidth;
   const sh = sourceIsVideo ? video.videoHeight : currentSource.naturalHeight;
@@ -726,8 +749,32 @@ function buildFilterStrip(){
 function selectFilter(i){
   currentFilterIndex = i;
   Array.from(filterStrip.children).forEach((el, idx) => el.classList.toggle('active', idx === i));
-  filterNameBadge.textContent = FILTERS[i].name;
+  filterNameText.textContent = FILTERS[i].name;
   filterStrip.children[i].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+}
+function buildLiveAdjustTray(){
+  liveAdjustGrid.innerHTML = '';
+  ADJUST_DEFS.forEach(def => {
+    const item = document.createElement('div');
+    item.className = 'adj-item';
+    const val = liveAdjust[def.key];
+    item.innerHTML =
+      '<div class="adj-item-head"><label>' + def.label + '</label><span class="adj-val">' + val + '</span></div>' +
+      '<input type="range" min="-50" max="50" value="' + val + '">';
+    const input = item.querySelector('input');
+    const valEl = item.querySelector('.adj-val');
+    input.addEventListener('input', () => {
+      const v = parseInt(input.value, 10);
+      liveAdjust[def.key] = v;
+      valEl.textContent = v;
+    });
+    liveAdjustGrid.appendChild(item);
+  });
+}
+function toggleLiveAdjustPanel(){
+  const open = liveAdjustPanel.classList.toggle('open');
+  filterNameBadge.classList.toggle('active-state', open);
+  btnAdjustToggle.classList.toggle('active-state', open);
 }
 
 /* ── SCREEN NAVIGATION ───────────────────────────────────── */
@@ -1341,6 +1388,8 @@ function wireEvents(){
   $('btnImportFallback').addEventListener('click', () => fileInput.click());
   $('btnExitImport').addEventListener('click', exitImportMode);
   fileInput.addEventListener('change', e => handleImportFile(e.target.files[0]));
+  btnAdjustToggle.addEventListener('click', toggleLiveAdjustPanel);
+  filterNameBadge.addEventListener('click', toggleLiveAdjustPanel);
 
   $('btnFlash').addEventListener('click', async () => {
     if(!stream) return;
@@ -1410,6 +1459,7 @@ function wireEvents(){
 /* ── INIT ────────────────────────────────────────────────── */
 async function init(){
   buildFilterStrip();
+  buildLiveAdjustTray();
   buildStickerTray();
   buildFrameTray();
   buildFilterTrayEditor();
