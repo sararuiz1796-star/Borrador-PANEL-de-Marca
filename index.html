@@ -425,7 +425,7 @@ button{font-family:inherit;}
 /* ── FILTER PRESETS ─────────────────────────────────────── */
 const FILTERS = [
   { id:'original',  name:'ORIGINAL',     css:'none',                                                          grain:.06, vignette:.12, leak:null,    scanlines:false, fade:0,   dot:'#F5F0E8' },
-  { id:'disposable',name:'DISPOSABLE',   css:'contrast(1.16) saturate(1.16) brightness(1.02)',                grain:.42, vignette:.48, leak:'warm',  scanlines:false, fade:.04, dot:'#E8A857',
+  { id:'disposable',name:'DISPOSABLE',   css:'contrast(1.16) saturate(1.16) brightness(1.02)', lut:'luts/CineMagic_NT_Film2P.cube', grain:.42, vignette:.48, leak:'warm',  scanlines:false, fade:.04, dot:'#E8A857',
     tone:{ shadow:'#20392C', shadowAlpha:.34, highlight:'#F3C878', highlightAlpha:.18 } },
   { id:'y2k',       name:'Y2K CAM',      css:'saturate(1.5) contrast(1.15) brightness(1.08) hue-rotate(-5deg)', grain:.22, vignette:.25, leak:null,  scanlines:false, fade:0,   dot:'#C4785A' },
   { id:'film90',    name:'90S FILM',     css:'sepia(.25) contrast(1.05) saturate(.9) brightness(.98)',        grain:.3,  vignette:.35, leak:'gold',  scanlines:false, fade:.1,  dot:'#C9A15A' },
