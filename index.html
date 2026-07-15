@@ -254,6 +254,11 @@ button{font-family:inherit;}
   padding:11px 16px;color:#F5F0E8;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.06em;
   text-transform:uppercase;outline:none;min-width:0;
 }
+.ep-filter-block{display:flex;flex-direction:column;gap:4px;width:100%}
+.ep-adjust-label{
+  font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;
+  color:rgba(245,240,232,.35);margin-top:2px;
+}
 .ep-caption-color{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer;flex-shrink:0}
 .ep-caption-color.active{border-color:#E8A857}
 .editor-tabs{display:flex;border-top:1px solid rgba(255,255,255,.06);flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -391,8 +396,11 @@ button{font-family:inherit;}
       <div class="ep-row" id="epStickers"></div>
       <div class="ep-row" id="epInk"></div>
       <div class="ep-row hidden" id="epFrame"></div>
-      <div class="ep-row hidden" id="epFilter"></div>
-      <div class="ep-adjust-grid hidden" id="epAdjust"></div>
+      <div class="ep-filter-block hidden" id="epFilterBlock">
+        <div class="ep-row" id="epFilter"></div>
+        <div class="ep-adjust-label">Ajusta este filtro</div>
+        <div class="ep-adjust-grid" id="epAdjust"></div>
+      </div>
       <div class="ep-row hidden" id="epCaption">
         <input type="text" id="captionInput" maxlength="40" placeholder="ESCRIBE UNA FRASE...">
         <button class="ep-caption-color active" data-color="#F5F0E8" style="background:#F5F0E8"></button>
@@ -403,7 +411,6 @@ button{font-family:inherit;}
       <button class="et-tab active" data-tab="stickers">✎ Stickers</button>
       <button class="et-tab" data-tab="frame">▢ Marco</button>
       <button class="et-tab" data-tab="filter">◐ Filtro</button>
-      <button class="et-tab" data-tab="adjust">▤ Ajustes</button>
       <button class="et-tab" data-tab="caption">Aa Texto</button>
     </div>
   </section>
@@ -447,7 +454,7 @@ const editorCanvas = $('editorCanvas'), editorCtx = editorCanvas.getContext('2d'
 const editorStage = $('editorStage');
 const handleDelete = $('stickerHandleDelete'), handleTransform = $('stickerHandleTransform');
 const captionInput = $('captionInput');
-const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), epFilterRow = $('epFilter'), epCaption = $('epCaption'), epAdjust = $('epAdjust');
+const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), epFilterRow = $('epFilter'), epCaption = $('epCaption'), epAdjust = $('epAdjust'), epFilterBlock = $('epFilterBlock');
 
 /* ── STATE ───────────────────────────────────────────────── */
 let stream = null, currentFacing = 'environment', torchOn = false;
@@ -1355,14 +1362,13 @@ function buildAdjustTray(){
   });
 }
 function switchEditorTab(tab){
-  ['stickers', 'frame', 'filter', 'adjust', 'caption'].forEach(t => {
+  ['stickers', 'frame', 'filter', 'caption'].forEach(t => {
     document.querySelector('.et-tab[data-tab="' + t + '"]').classList.toggle('active', t === tab);
   });
   epStickers.classList.toggle('hidden', tab !== 'stickers');
   epInk.classList.toggle('hidden', tab !== 'stickers');
   epFrame.classList.toggle('hidden', tab !== 'frame');
-  epFilterRow.classList.toggle('hidden', tab !== 'filter');
-  epAdjust.classList.toggle('hidden', tab !== 'adjust');
+  epFilterBlock.classList.toggle('hidden', tab !== 'filter');
   epCaption.classList.toggle('hidden', tab !== 'caption');
 }
 function saveEditedPhoto(){
