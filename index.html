@@ -223,6 +223,26 @@ button{font-family:inherit;}
   letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.55);text-shadow:0 1px 2px rgba(0,0,0,.6);
 }
 .ep-frame-swatch.active{border-color:#E8A857}
+.ep-adjust-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px;width:100%}
+.adj-item{display:flex;flex-direction:column;gap:2px;padding:5px 0}
+.adj-item-head{display:flex;justify-content:space-between;align-items:baseline}
+.adj-item-head label{
+  font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:rgba(245,240,232,.5);
+}
+.adj-item-head .adj-val{font-family:'DM Mono',monospace;font-size:9.5px;color:#E8A857}
+.adj-item input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:3px;
+  background:rgba(255,255,255,.15);border-radius:99px;outline:none;
+}
+.adj-item input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+  background:#E8A857;cursor:pointer;margin-top:-6px;border:2px solid #050403;
+}
+.adj-item input[type=range]::-moz-range-thumb{
+  width:15px;height:15px;border-radius:50%;background:#E8A857;border:2px solid #050403;cursor:pointer;
+}
+.adj-item input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.15);border-radius:99px}
 #captionInput{
   flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:99px;
   padding:11px 16px;color:#F5F0E8;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.06em;
@@ -361,6 +381,7 @@ button{font-family:inherit;}
       <div class="ep-row" id="epInk"></div>
       <div class="ep-row hidden" id="epFrame"></div>
       <div class="ep-row hidden" id="epFilter"></div>
+      <div class="ep-adjust-grid hidden" id="epAdjust"></div>
       <div class="ep-row hidden" id="epCaption">
         <input type="text" id="captionInput" maxlength="40" placeholder="ESCRIBE UNA FRASE...">
         <button class="ep-caption-color active" data-color="#F5F0E8" style="background:#F5F0E8"></button>
@@ -371,6 +392,7 @@ button{font-family:inherit;}
       <button class="et-tab active" data-tab="stickers">✎ Stickers</button>
       <button class="et-tab" data-tab="frame">▢ Marco</button>
       <button class="et-tab" data-tab="filter">◐ Filtro</button>
+      <button class="et-tab" data-tab="adjust">▤ Ajustes</button>
       <button class="et-tab" data-tab="caption">Aa Texto</button>
     </div>
   </section>
@@ -385,7 +407,8 @@ button{font-family:inherit;}
 /* ── FILTER PRESETS ─────────────────────────────────────── */
 const FILTERS = [
   { id:'original',  name:'ORIGINAL',     css:'none',                                                          grain:.06, vignette:.12, leak:null,    scanlines:false, fade:0,   dot:'#F5F0E8' },
-  { id:'disposable',name:'DISPOSABLE',   css:'contrast(1.1) saturate(1.3) brightness(1.05) sepia(.15)',       grain:.35, vignette:.45, leak:'warm',  scanlines:false, fade:.05, dot:'#E8A857' },
+  { id:'disposable',name:'DISPOSABLE',   css:'contrast(1.16) saturate(1.16) brightness(1.02)',                grain:.42, vignette:.48, leak:'warm',  scanlines:false, fade:.04, dot:'#E8A857',
+    tone:{ shadow:'#20392C', shadowAlpha:.34, highlight:'#F3C878', highlightAlpha:.18 } },
   { id:'y2k',       name:'Y2K CAM',      css:'saturate(1.5) contrast(1.15) brightness(1.08) hue-rotate(-5deg)', grain:.22, vignette:.25, leak:null,  scanlines:false, fade:0,   dot:'#C4785A' },
   { id:'film90',    name:'90S FILM',     css:'sepia(.25) contrast(1.05) saturate(.9) brightness(.98)',        grain:.3,  vignette:.35, leak:'gold',  scanlines:false, fade:.1,  dot:'#C9A15A' },
   { id:'vhs',       name:'VHS',         css:'saturate(1.2) contrast(.95) brightness(1.02) hue-rotate(3deg)',  grain:.25, vignette:.2,  leak:null,    scanlines:true,  fade:0,   dot:'#7A9BB5' },
@@ -412,7 +435,7 @@ const editorCanvas = $('editorCanvas'), editorCtx = editorCanvas.getContext('2d'
 const editorStage = $('editorStage');
 const handleDelete = $('stickerHandleDelete'), handleTransform = $('stickerHandleTransform');
 const captionInput = $('captionInput');
-const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), epFilterRow = $('epFilter'), epCaption = $('epCaption');
+const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), epFilterRow = $('epFilter'), epCaption = $('epCaption'), epAdjust = $('epAdjust');
 
 /* ── STATE ───────────────────────────────────────────────── */
 let stream = null, currentFacing = 'environment', torchOn = false;
@@ -544,15 +567,31 @@ function makeVignette(w, h){
   return c;
 }
 function makeGrainTile(){
-  const size = 160;
+  const size = 180;
   const c = document.createElement('canvas'); c.width = size; c.height = size;
   const g = c.getContext('2d');
-  const id = g.createImageData(size, size);
-  for(let i = 0; i < id.data.length; i += 4){
-    const v = (Math.random() * 255) | 0;
-    id.data[i] = v; id.data[i+1] = v; id.data[i+2] = v; id.data[i+3] = 255;
+  // coarse layer: low-res noise upscaled with smoothing -> soft organic blotches
+  const coarseSize = 30;
+  const coarse = document.createElement('canvas'); coarse.width = coarseSize; coarse.height = coarseSize;
+  const cg = coarse.getContext('2d');
+  const cid = cg.createImageData(coarseSize, coarseSize);
+  for(let i = 0; i < cid.data.length; i += 4){
+    const v = 128 + (Math.random() - 0.5) * 70;
+    cid.data[i] = v; cid.data[i+1] = v; cid.data[i+2] = v; cid.data[i+3] = 255;
   }
-  g.putImageData(id, 0, 0);
+  cg.putImageData(cid, 0, 0);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(coarse, 0, 0, size, size);
+  // fine layer: sharp per-pixel speckle blended on top at partial opacity -> grain texture, not flat static
+  const fine = document.createElement('canvas'); fine.width = size; fine.height = size;
+  const fg = fine.getContext('2d');
+  const fid = fg.createImageData(size, size);
+  for(let i = 0; i < fid.data.length; i += 4){
+    const v = 128 + (Math.random() - 0.5) * 95;
+    fid.data[i] = v; fid.data[i+1] = v; fid.data[i+2] = v; fid.data[i+3] = 130;
+  }
+  fg.putImageData(fid, 0, 0);
+  g.drawImage(fine, 0, 0);
   return c;
 }
 function makeScanlines(w, h){
@@ -569,6 +608,52 @@ function makeLeak(w, h, color){
   grad.addColorStop(0, color); grad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = grad; g.fillRect(0, 0, w, h);
   return c;
+}
+
+/* ── SHARED POST-PROCESSING (used by live camera + editor) ─ */
+function applyPostEffects(c, w, h, f, ov, opts){
+  opts = opts || {};
+  if(f.tone){
+    c.save(); c.globalCompositeOperation = 'multiply'; c.globalAlpha = f.tone.shadowAlpha;
+    c.fillStyle = f.tone.shadow; c.fillRect(0, 0, w, h); c.restore();
+    c.save(); c.globalCompositeOperation = 'soft-light'; c.globalAlpha = f.tone.highlightAlpha;
+    c.fillStyle = f.tone.highlight; c.fillRect(0, 0, w, h); c.restore();
+  }
+  if(f.fade > 0){
+    c.save(); c.globalAlpha = f.fade; c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); c.restore();
+  }
+  if(f.vignette > 0){
+    c.save(); c.globalAlpha = f.vignette; c.globalCompositeOperation = 'multiply';
+    c.drawImage(ov.vignette, 0, 0); c.restore();
+  }
+  if(f.leak){
+    let dx = 0, dy = 0;
+    if(opts.animate){
+      const t = (opts.time || 0) * 0.00006;
+      dx = Math.sin(t) * w * 0.05; dy = Math.cos(t * 0.8) * h * 0.03;
+    }
+    c.save(); c.globalAlpha = .55; c.globalCompositeOperation = 'screen';
+    c.drawImage(ov.leaks[f.leak], dx, dy); c.restore();
+  }
+  if(f.scanlines){
+    c.save(); c.globalAlpha = .5; c.globalCompositeOperation = 'multiply';
+    c.drawImage(ov.scanlines, 0, 0); c.restore();
+    if(opts.animate && opts.frameCount % 14 === 0){
+      c.save(); c.globalAlpha = .15; c.fillStyle = '#fff';
+      c.fillRect(0, Math.random() * h, w, 2 + Math.random() * 3); c.restore();
+    }
+  }
+  if(f.grain > 0 && ov.grainPattern){
+    c.save();
+    c.globalAlpha = f.grain; c.globalCompositeOperation = 'overlay';
+    let gx, gy;
+    if(opts.animate){ gx = Math.random() * 180; gy = Math.random() * 180; }
+    else { gx = (opts.grainSeed && opts.grainSeed.x) || 0; gy = (opts.grainSeed && opts.grainSeed.y) || 0; }
+    c.translate(gx, gy);
+    c.fillStyle = ov.grainPattern;
+    c.fillRect(-180, -180, w + 360, h + 360);
+    c.restore();
+  }
 }
 
 /* ── RENDER LOOP ─────────────────────────────────────────── */
@@ -592,35 +677,7 @@ function drawFrame(time){
   ctx.drawImage(currentSource, sx, sy, sWidth, sHeight, 0, 0, w, h);
   ctx.restore();
 
-  if(f.fade > 0){
-    ctx.save(); ctx.globalAlpha = f.fade; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.restore();
-  }
-  if(f.vignette > 0){
-    ctx.save(); ctx.globalAlpha = f.vignette; ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(overlays.vignette, 0, 0); ctx.restore();
-  }
-  if(f.leak){
-    const t = time * 0.00006;
-    const dx = Math.sin(t) * w * 0.05, dy = Math.cos(t * 0.8) * h * 0.03;
-    ctx.save(); ctx.globalAlpha = .55; ctx.globalCompositeOperation = 'screen';
-    ctx.drawImage(overlays.leaks[f.leak], dx, dy); ctx.restore();
-  }
-  if(f.scanlines){
-    ctx.save(); ctx.globalAlpha = .5; ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(overlays.scanlines, 0, 0); ctx.restore();
-    if(frameCount % 14 === 0){
-      ctx.save(); ctx.globalAlpha = .15; ctx.fillStyle = '#fff';
-      ctx.fillRect(0, Math.random() * h, w, 2 + Math.random() * 3); ctx.restore();
-    }
-  }
-  if(f.grain > 0 && grainPattern){
-    ctx.save();
-    ctx.globalAlpha = f.grain; ctx.globalCompositeOperation = 'overlay';
-    ctx.translate((frameCount * 3) % 160, (frameCount * 5) % 160);
-    ctx.fillStyle = grainPattern;
-    ctx.fillRect(-160, -160, w + 320, h + 320);
-    ctx.restore();
-  }
+  applyPostEffects(ctx, w, h, f, { vignette: overlays.vignette, scanlines: overlays.scanlines, leaks: overlays.leaks, grainPattern }, { animate: true, time, frameCount });
   frameCount++;
 }
 function renderLoop(time){
@@ -870,6 +927,14 @@ const FRAME_STYLES = {
   cream: { label: 'Crema',   bg: '#E8E0CE', padSide: .07, padTop: .07, padBottom: .07,  texture: true  }
 };
 const FRAME_ORDER = ['none', 'paper', 'red', 'black', 'cream'];
+const ADJUST_DEFS = [
+  { key: 'brightness', label: 'Brillo' },
+  { key: 'contrast',   label: 'Contraste' },
+  { key: 'saturation', label: 'Saturación' },
+  { key: 'warmth',     label: 'Calidez' },
+  { key: 'vignette',   label: 'Viñeta' },
+  { key: 'grain',      label: 'Grano' }
+];
 
 let editorState = null;
 let selectedStickerId = null, stickerSeq = 0;
@@ -877,7 +942,40 @@ let currentInkColor = INK_COLORS[0];
 let editorDragMode = null, editorDragOffset = { x: 0, y: 0 };
 let editorReturnScreen = 'gallery';
 let editorTextureCache = {};
+let editorOverlayCache = {};
+let editorGrainPattern = null;
 
+function clamp(v, lo, hi){ return Math.min(hi, Math.max(lo, v)); }
+function getEffectiveFilter(base, adjust){
+  const parts = [];
+  if(base.css && base.css !== 'none') parts.push(base.css);
+  parts.push('brightness(' + (1 + adjust.brightness / 150) + ')');
+  parts.push('contrast(' + (1 + adjust.contrast / 150) + ')');
+  parts.push('saturate(' + (1 + adjust.saturation / 120) + ')');
+  if(adjust.warmth) parts.push('hue-rotate(' + (-(adjust.warmth / 50) * 12) + 'deg)');
+  return {
+    ...base,
+    css: parts.join(' '),
+    grain: clamp(base.grain + adjust.grain / 140, 0, 0.75),
+    vignette: clamp(base.vignette + adjust.vignette / 110, 0, 0.85)
+  };
+}
+function getEditorOverlays(w, h){
+  const key = w + 'x' + h;
+  if(!editorOverlayCache[key]){
+    editorOverlayCache[key] = {
+      vignette: makeVignette(w, h),
+      scanlines: makeScanlines(w, h),
+      leaks: {
+        warm:  makeLeak(w, h, 'rgba(255,170,80,.9)'),
+        gold:  makeLeak(w, h, 'rgba(255,210,120,.85)'),
+        white: makeLeak(w, h, 'rgba(255,255,255,.8)'),
+        cyan:  makeLeak(w, h, 'rgba(120,220,255,.8)')
+      }
+    };
+  }
+  return editorOverlayCache[key];
+}
 function findFilterIndexByName(name){
   const i = FILTERS.findIndex(f => f.name === name);
   return i === -1 ? 0 : i;
@@ -897,15 +995,19 @@ function openEditor(imgEl, filterNameHint, returnScreen){
     frame: 'none',
     filterIndex: findFilterIndexByName(filterNameHint),
     stickers: [],
-    caption: { text: '', color: '#F5F0E8' }
+    caption: { text: '', color: '#F5F0E8' },
+    adjust: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 },
+    grainSeed: { x: Math.random() * 180, y: Math.random() * 180 }
   };
   selectedStickerId = null;
   const size = computeEditorCanvasSize(imgEl);
   editorCanvas.width = size.w; editorCanvas.height = size.h;
+  editorGrainPattern = editorCtx.createPattern(makeGrainTile(), 'repeat');
   captionInput.value = '';
   setCaptionColorUI('#F5F0E8');
   setActiveFrameSwatch('none');
   setActiveFilterChipEditor(editorState.filterIndex);
+  buildAdjustTray();
   switchEditorTab('stickers');
   showScreen('editor');
   editorRender();
@@ -955,6 +1057,7 @@ function editorRender(){
   const rect = editorPhotoRect(frame, w, h);
   const img = editorState.baseImage;
   const iw = img.naturalWidth, ih = img.naturalHeight;
+  const effFilter = getEffectiveFilter(FILTERS[editorState.filterIndex], editorState.adjust);
   if(iw && ih){
     const irat = iw / ih, rrat = rect.w / rect.h;
     let dw, dh, dx, dy;
@@ -962,9 +1065,12 @@ function editorRender(){
     else { dh = rect.h; dw = rect.h * irat; dy = rect.y; dx = rect.x + (rect.w - dw) / 2; }
     editorCtx.save();
     editorCtx.beginPath(); editorCtx.rect(rect.x, rect.y, rect.w, rect.h); editorCtx.clip();
-    editorCtx.filter = FILTERS[editorState.filterIndex].css;
+    editorCtx.filter = effFilter.css;
     editorCtx.drawImage(img, dx, dy, dw, dh);
     editorCtx.filter = 'none';
+    editorCtx.translate(rect.x, rect.y);
+    const ov = getEditorOverlays(Math.round(rect.w), Math.round(rect.h));
+    applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPattern: editorGrainPattern }, { animate: false, grainSeed: editorState.grainSeed });
     editorCtx.restore();
   }
   editorState.stickers.forEach(s => {
@@ -1181,14 +1287,35 @@ function setCaptionColorUI(color){
     el.classList.toggle('active', el.dataset.color === color);
   });
 }
+function buildAdjustTray(){
+  epAdjust.innerHTML = '';
+  ADJUST_DEFS.forEach(def => {
+    const item = document.createElement('div');
+    item.className = 'adj-item';
+    const val = editorState.adjust[def.key];
+    item.innerHTML =
+      '<div class="adj-item-head"><label>' + def.label + '</label><span class="adj-val">' + val + '</span></div>' +
+      '<input type="range" min="-50" max="50" value="' + val + '">';
+    const input = item.querySelector('input');
+    const valEl = item.querySelector('.adj-val');
+    input.addEventListener('input', () => {
+      const v = parseInt(input.value, 10);
+      editorState.adjust[def.key] = v;
+      valEl.textContent = v;
+      editorRender();
+    });
+    epAdjust.appendChild(item);
+  });
+}
 function switchEditorTab(tab){
-  ['stickers', 'frame', 'filter', 'caption'].forEach(t => {
+  ['stickers', 'frame', 'filter', 'adjust', 'caption'].forEach(t => {
     document.querySelector('.et-tab[data-tab="' + t + '"]').classList.toggle('active', t === tab);
   });
   epStickers.classList.toggle('hidden', tab !== 'stickers');
   epInk.classList.toggle('hidden', tab !== 'stickers');
   epFrame.classList.toggle('hidden', tab !== 'frame');
   epFilterRow.classList.toggle('hidden', tab !== 'filter');
+  epAdjust.classList.toggle('hidden', tab !== 'adjust');
   epCaption.classList.toggle('hidden', tab !== 'caption');
 }
 function saveEditedPhoto(){
