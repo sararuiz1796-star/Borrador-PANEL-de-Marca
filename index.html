@@ -435,7 +435,11 @@ const FILTERS = [
   { id:'sepia',     name:'SEPIA DREAM',  css:'sepia(.6) contrast(1.05) saturate(.8) brightness(1.05)',        grain:.15, vignette:.4,  leak:'gold',  scanlines:false, fade:.08, dot:'#B08850' },
   { id:'faded',     name:'FADED',        css:'contrast(.85) saturate(.7) brightness(1.1)',                    grain:.1,  vignette:.2,  leak:null,    scanlines:false, fade:.25, dot:'#C4908A' },
   { id:'golden',    name:'GOLDEN HOUR',  css:'saturate(1.3) contrast(1.05) brightness(1.05) hue-rotate(-8deg) sepia(.1)', grain:.15, vignette:.35, leak:'warm', scanlines:false, fade:0, dot:'#E0A34A' },
-  { id:'cyber',     name:'CYBER',        css:'saturate(1.6) contrast(1.2) hue-rotate(15deg) brightness(1.05)',grain:.2,  vignette:.3,  leak:'cyan',  scanlines:false, fade:0,   dot:'#78DCFF' }
+  { id:'cyber',     name:'CYBER',        css:'saturate(1.6) contrast(1.2) hue-rotate(15deg) brightness(1.05)',grain:.2,  vignette:.3,  leak:'cyan',  scanlines:false, fade:0,   dot:'#78DCFF' },
+  // Real 3D LUTs (.cube), graded via WebGL — css is the no-WebGL/loading fallback only
+  { id:'battlefield', name:'BATTLEFIELD', css:'contrast(1.1) saturate(.75)',       lut:'luts/BattleField.cube',        grain:.28, vignette:.4,  leak:null, scanlines:false, fade:0,   dot:'#8A7A5A' },
+  { id:'bwskin',      name:'BW SKIN',     css:'grayscale(1) contrast(1.05)',       lut:'luts/better_BW_skin.cube',     grain:.18, vignette:.3,  leak:null, scanlines:false, fade:0,   dot:'#C9C2B5' },
+  { id:'bleachbypass', name:'BLEACH BYPASS', css:'contrast(1.25) saturate(.55)',   lut:'luts/Bleach_Bypass_Cold.cube', grain:.3,  vignette:.35, leak:null, scanlines:false, fade:0,   dot:'#8FA5AE' }
 ];
 
 /* ── DOM ─────────────────────────────────────────────────── */
@@ -631,6 +635,184 @@ function makeLeak(w, h, color){
   return c;
 }
 
+/* ── 3D LUT COLOR GRADING (real .cube files via WebGL) ──────
+   The color-grade step (previously ctx.filter CSS only) now goes
+   through an actual 3D lookup table when a preset declares one.
+   The LUT is packed as a size×size tile strip (size² × size) 2D
+   texture — the standard trick to sample a 3D cube from a 2D
+   texture without needing WebGL2/texture3D. R/G interpolation comes
+   for free from GL_LINEAR texture filtering; the B axis is blended
+   manually between its two nearest slices for a quasi-trilinear
+   lookup. Everything else (grain, vignette, leaks, split-tone,
+   scanlines) stays as 2D canvas compositing, applied after. ─────── */
+function parseCubeLUT(text){
+  let size = 0;
+  const values = [];
+  const lines = text.split('\n');
+  for(let i = 0; i < lines.length; i++){
+    const line = lines[i].trim();
+    if(!line || line.startsWith('#') || line.startsWith('TITLE') || line.startsWith('DOMAIN_')) continue;
+    if(line.startsWith('LUT_3D_SIZE')){ size = parseInt(line.split(/\s+/)[1], 10); continue; }
+    const parts = line.split(/\s+/).map(Number);
+    if(parts.length === 3 && !parts.some(isNaN)) values.push(parts[0], parts[1], parts[2]);
+  }
+  return { size, data: new Float32Array(values) };
+}
+
+const lutGL = (function initLutGL(){
+  const glCanvas = document.createElement('canvas');
+  const gl = glCanvas.getContext('webgl', { premultipliedAlpha: false }) ||
+             glCanvas.getContext('experimental-webgl', { premultipliedAlpha: false });
+  if(!gl) return null;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+      console.warn('LUT shader error:', gl.getShaderInfoLog(sh));
+      return null;
+    }
+    return sh;
+  }
+  const vs = compile(gl.VERTEX_SHADER,
+    'attribute vec2 aPos; varying vec2 vUv;' +
+    'void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }');
+  const fs = compile(gl.FRAGMENT_SHADER,
+    'precision mediump float; varying vec2 vUv;' +
+    'uniform sampler2D uImage; uniform sampler2D uLut; uniform float uLutSize; uniform float uIntensity;' +
+    'void main(){' +
+    '  vec4 src = texture2D(uImage, vUv);' +
+    '  float size = uLutSize;' +
+    '  float r = src.r * (size - 1.0), g = src.g * (size - 1.0), b = src.b * (size - 1.0);' +
+    '  float b0 = floor(b), b1 = min(b0 + 1.0, size - 1.0), bMix = b - b0;' +
+    '  float texW = size * size;' +
+    '  vec2 uv0 = vec2((b0 * size + r + 0.5) / texW, (g + 0.5) / size);' +
+    '  vec2 uv1 = vec2((b1 * size + r + 0.5) / texW, (g + 0.5) / size);' +
+    '  vec3 graded = mix(texture2D(uLut, uv0).rgb, texture2D(uLut, uv1).rgb, bMix);' +
+    '  gl_FragColor = vec4(mix(src.rgb, graded, uIntensity), src.a);' +
+    '}');
+  if(!vs || !fs) return null;
+  const program = gl.createProgram();
+  gl.attachShader(program, vs); gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+    console.warn('LUT program link error:', gl.getProgramInfoLog(program));
+    return null;
+  }
+  gl.useProgram(program);
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(program, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const uImage = gl.getUniformLocation(program, 'uImage');
+  const uLut = gl.getUniformLocation(program, 'uLut');
+  const uLutSize = gl.getUniformLocation(program, 'uLutSize');
+  const uIntensity = gl.getUniformLocation(program, 'uIntensity');
+
+  const imageTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, imageTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  let imageTexW = 0, imageTexH = 0;
+
+  return {
+    render(sourceEl, w, h, lutTexInfo, intensity){
+      if(glCanvas.width !== w) glCanvas.width = w;
+      if(glCanvas.height !== h) glCanvas.height = h;
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(program);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, imageTex);
+      // texSubImage2D reuses the existing texture storage (no realloc) when the
+      // source size hasn't changed since last frame — noticeably cheaper per-frame
+      // than texImage2D, which matters since this runs on every rendered frame
+      if(sourceEl.width === imageTexW && sourceEl.height === imageTexH){
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sourceEl);
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceEl);
+        imageTexW = sourceEl.width; imageTexH = sourceEl.height;
+      }
+      gl.uniform1i(uImage, 0);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, lutTexInfo.texture);
+      gl.uniform1i(uLut, 1);
+      gl.uniform1f(uLutSize, lutTexInfo.size);
+      gl.uniform1f(uIntensity, intensity);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      // force the GPU to finish this draw before handing the canvas to ctx.drawImage —
+      // without this, an immediately-following canvas.toBlob()/getImageData() on the 2D
+      // canvas can stall or silently hang waiting on the WebGL drawing buffer to resolve
+      gl.finish();
+      return glCanvas;
+    },
+    buildLutTexture(parsed){
+      const size = parsed.size, data = parsed.data;
+      const texW = size * size, texH = size;
+      const pixels = new Uint8Array(texW * texH * 4);
+      for(let b = 0; b < size; b++){
+        for(let g = 0; g < size; g++){
+          for(let r = 0; r < size; r++){
+            const srcIdx = (b*size*size + g*size + r) * 3;
+            const dstIdx = (g*texW + (b*size + r)) * 4;
+            pixels[dstIdx]   = Math.round(data[srcIdx]   * 255);
+            pixels[dstIdx+1] = Math.round(data[srcIdx+1] * 255);
+            pixels[dstIdx+2] = Math.round(data[srcIdx+2] * 255);
+            pixels[dstIdx+3] = 255;
+          }
+        }
+      }
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, texW, texH, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      return { texture: tex, size };
+    }
+  };
+})();
+
+const lutStageCanvas = document.createElement('canvas');
+const lutStageCtx = lutStageCanvas.getContext('2d');
+const lutCache = {}; // filter id -> {texture,size} | 'loading' | 'failed'
+
+function isLutReady(baseFilter){
+  return !!(baseFilter.lut && lutGL && lutCache[baseFilter.id] &&
+    lutCache[baseFilter.id] !== 'loading' && lutCache[baseFilter.id] !== 'failed');
+}
+async function ensureLutLoaded(baseFilter){
+  if(!baseFilter.lut || !lutGL || lutCache[baseFilter.id]) return;
+  lutCache[baseFilter.id] = 'loading';
+  try{
+    const res = await fetch(baseFilter.lut);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const parsed = parseCubeLUT(text);
+    if(!parsed.size || parsed.data.length !== parsed.size ** 3 * 3) throw new Error('.cube inválido o incompleto');
+    lutCache[baseFilter.id] = lutGL.buildLutTexture(parsed);
+    if(editorState && FILTERS[editorState.filterIndex] === baseFilter) editorRender();
+  }catch(err){
+    console.warn('No se pudo cargar el LUT ' + baseFilter.lut + ':', err);
+    lutCache[baseFilter.id] = 'failed';
+  }
+}
+function preloadAllLuts(){
+  FILTERS.forEach(f => { if(f.lut) ensureLutLoaded(f); });
+}
+
 /* ── SHARED POST-PROCESSING (used by live camera + editor) ─ */
 function applyPostEffects(c, w, h, f, ov, opts){
   opts = opts || {};
@@ -690,7 +872,8 @@ function applyPostEffects(c, w, h, f, ov, opts){
 function drawFrame(time){
   const w = canvas.width, h = canvas.height;
   if(w === 0 || h === 0) return;
-  const f = getEffectiveFilter(currentFilter(), liveAdjust);
+  const baseF = currentFilter();
+  const f = getEffectiveFilter(baseF, liveAdjust);
 
   const sw = sourceIsVideo ? video.videoWidth : currentSource.naturalWidth;
   const sh = sourceIsVideo ? video.videoHeight : currentSource.naturalHeight;
@@ -701,11 +884,30 @@ function drawFrame(time){
   if(srcRatio > canvasRatio){ sHeight = sh; sWidth = sh * canvasRatio; sx = (sw - sWidth) / 2; sy = 0; }
   else { sWidth = sw; sHeight = sw / canvasRatio; sx = 0; sy = (sh - sHeight) / 2; }
 
-  ctx.save();
-  ctx.filter = f.css;
-  if(sourceIsVideo && currentFacing === 'user'){ ctx.translate(w, 0); ctx.scale(-1, 1); }
-  ctx.drawImage(currentSource, sx, sy, sWidth, sHeight, 0, 0, w, h);
-  ctx.restore();
+  const mirror = sourceIsVideo && currentFacing === 'user';
+
+  if(isLutReady(baseF)){
+    // real 3D LUT path: draw the raw (cropped+mirrored) frame to a staging
+    // canvas, grade it on the GPU, then composite the graded result with
+    // only the slider deltas (the "look" itself already came from the LUT)
+    lutStageCanvas.width = w; lutStageCanvas.height = h;
+    lutStageCtx.save();
+    if(mirror){ lutStageCtx.translate(w, 0); lutStageCtx.scale(-1, 1); }
+    lutStageCtx.drawImage(currentSource, sx, sy, sWidth, sHeight, 0, 0, w, h);
+    lutStageCtx.restore();
+    const graded = lutGL.render(lutStageCanvas, w, h, lutCache[baseF.id], 1.0);
+    ctx.save();
+    ctx.filter = adjustCss(liveAdjust);
+    ctx.drawImage(graded, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    if(baseF.lut) ensureLutLoaded(baseF);
+    ctx.save();
+    ctx.filter = f.css;
+    if(mirror){ ctx.translate(w, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(currentSource, sx, sy, sWidth, sHeight, 0, 0, w, h);
+    ctx.restore();
+  }
 
   applyPostEffects(ctx, w, h, f, { vignette: overlays.vignette, scanlines: overlays.scanlines, leaks: overlays.leaks, grainPattern }, { animate: true, time, frameCount });
   frameCount++;
@@ -758,6 +960,7 @@ function selectFilter(i){
   Array.from(filterStrip.children).forEach((el, idx) => el.classList.toggle('active', idx === i));
   filterNameText.textContent = FILTERS[i].name;
   filterStrip.children[i].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  if(FILTERS[i].lut) ensureLutLoaded(FILTERS[i]);
 }
 function buildLiveAdjustTray(){
   liveAdjustGrid.innerHTML = '';
@@ -1000,13 +1203,19 @@ let editorOverlayCache = {};
 let editorGrainPattern = null;
 
 function clamp(v, lo, hi){ return Math.min(hi, Math.max(lo, v)); }
+function adjustCss(adjust){
+  const parts = [
+    'brightness(' + (1 + adjust.brightness / 150) + ')',
+    'contrast(' + (1 + adjust.contrast / 150) + ')',
+    'saturate(' + (1 + adjust.saturation / 120) + ')'
+  ];
+  if(adjust.warmth) parts.push('hue-rotate(' + (-(adjust.warmth / 50) * 12) + 'deg)');
+  return parts.join(' ');
+}
 function getEffectiveFilter(base, adjust){
   const parts = [];
   if(base.css && base.css !== 'none') parts.push(base.css);
-  parts.push('brightness(' + (1 + adjust.brightness / 150) + ')');
-  parts.push('contrast(' + (1 + adjust.contrast / 150) + ')');
-  parts.push('saturate(' + (1 + adjust.saturation / 120) + ')');
-  if(adjust.warmth) parts.push('hue-rotate(' + (-(adjust.warmth / 50) * 12) + 'deg)');
+  parts.push(adjustCss(adjust));
   return {
     ...base,
     css: parts.join(' '),
@@ -1111,7 +1320,8 @@ function editorRender(){
   const rect = editorPhotoRect(frame, w, h);
   const img = editorState.baseImage;
   const iw = img.naturalWidth, ih = img.naturalHeight;
-  const effFilter = getEffectiveFilter(FILTERS[editorState.filterIndex], editorState.adjust);
+  const baseF = FILTERS[editorState.filterIndex];
+  const effFilter = getEffectiveFilter(baseF, editorState.adjust);
   if(iw && ih){
     const irat = iw / ih, rrat = rect.w / rect.h;
     let dw, dh, dx, dy;
@@ -1119,9 +1329,21 @@ function editorRender(){
     else { dh = rect.h; dw = rect.h * irat; dy = rect.y; dx = rect.x + (rect.w - dw) / 2; }
     editorCtx.save();
     editorCtx.beginPath(); editorCtx.rect(rect.x, rect.y, rect.w, rect.h); editorCtx.clip();
-    editorCtx.filter = effFilter.css;
-    editorCtx.drawImage(img, dx, dy, dw, dh);
-    editorCtx.filter = 'none';
+    if(isLutReady(baseF)){
+      const gw = Math.max(1, Math.round(dw)), gh = Math.max(1, Math.round(dh));
+      lutStageCanvas.width = gw; lutStageCanvas.height = gh;
+      lutStageCtx.clearRect(0, 0, gw, gh);
+      lutStageCtx.drawImage(img, 0, 0, gw, gh);
+      const graded = lutGL.render(lutStageCanvas, gw, gh, lutCache[baseF.id], 1.0);
+      editorCtx.filter = adjustCss(editorState.adjust);
+      editorCtx.drawImage(graded, dx, dy, dw, dh);
+      editorCtx.filter = 'none';
+    } else {
+      if(baseF.lut) ensureLutLoaded(baseF);
+      editorCtx.filter = effFilter.css;
+      editorCtx.drawImage(img, dx, dy, dw, dh);
+      editorCtx.filter = 'none';
+    }
     editorCtx.translate(rect.x, rect.y);
     const ov = getEditorOverlays(Math.round(rect.w), Math.round(rect.h));
     applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPattern: editorGrainPattern }, { animate: false, grainSeed: editorState.grainSeed });
@@ -1330,6 +1552,7 @@ function buildFilterTrayEditor(){
     btn.addEventListener('click', () => {
       editorState.filterIndex = i;
       setActiveFilterChipEditor(i);
+      if(f.lut) ensureLutLoaded(f);
       editorRender();
     });
     epFilterRow.appendChild(btn);
@@ -1470,6 +1693,7 @@ async function init(){
   buildFrameTray();
   buildFilterTrayEditor();
   wireEvents();
+  preloadAllLuts();
   const minSplash = new Promise(r => setTimeout(r, 1000));
   await detectMultipleCameras();
   await startCamera(currentFacing);
