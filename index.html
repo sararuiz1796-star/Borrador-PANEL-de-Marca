@@ -173,6 +173,68 @@ button{font-family:inherit;}
   background:rgba(255,255,255,.06);color:#F5F0E8;cursor:pointer;display:flex;align-items:center;gap:6px;
 }
 .vc-btn.danger{border-color:rgba(196,90,90,.4);color:#E39A9A;background:rgba(196,90,90,.1)}
+
+/* ── QUICK EDIT CHIP ── */
+.shutter-row{position:relative}
+.quick-edit-chip{
+  position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%) translateY(-4px);
+  background:rgba(232,168,87,.95);color:#0A0805;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;padding:9px 16px;border-radius:99px;
+  border:none;cursor:pointer;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:7;
+}
+.quick-edit-chip.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+
+/* ── EDITOR (photodump decorator) ── */
+.editor-header{
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+  padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 10px;
+}
+.editor-title{
+  font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:rgba(245,240,232,.6);
+}
+.editor-save-btn{background:#E8A857;color:#0A0805;border-color:#E8A857;font-weight:700}
+.editor-stage{
+  flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;
+  padding:12px 18px;overflow:hidden;touch-action:none;
+}
+#editorCanvas{max-width:100%;max-height:100%;width:auto;height:auto;display:block;touch-action:none;box-shadow:0 14px 34px rgba(0,0,0,.5)}
+.sticker-handle{
+  position:absolute;width:26px;height:26px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:12px;
+  background:#E8A857;color:#0A0805;border:2px solid #050403;cursor:pointer;
+  transform:translate(-50%,-50%);z-index:8;touch-action:none;
+}
+.sticker-handle-delete{background:#C45A5A;color:#fff}
+.editor-panel{flex-shrink:0;padding:10px 14px;min-height:60px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.ep-row{display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;align-items:center}
+.ep-row::-webkit-scrollbar{display:none}
+.ep-sticker-btn{
+  flex-shrink:0;width:52px;height:52px;border-radius:12px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.ep-sticker-btn canvas{width:36px;height:36px}
+.ep-ink-swatch{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer}
+.ep-ink-swatch.active{border-color:#F5F0E8;box-shadow:0 0 0 2px rgba(232,168,87,.5)}
+.ep-frame-swatch{
+  flex-shrink:0;width:52px;height:52px;border-radius:10px;border:2px solid rgba(255,255,255,.1);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:7.5px;
+  letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,.55);text-shadow:0 1px 2px rgba(0,0,0,.6);
+}
+.ep-frame-swatch.active{border-color:#E8A857}
+#captionInput{
+  flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:99px;
+  padding:11px 16px;color:#F5F0E8;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;outline:none;min-width:0;
+}
+.ep-caption-color{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.15);cursor:pointer;flex-shrink:0}
+.ep-caption-color.active{border-color:#E8A857}
+.editor-tabs{display:flex;border-top:1px solid rgba(255,255,255,.06);flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,0px)}
+.et-tab{
+  flex:1;padding:12px 4px;background:none;border:none;color:rgba(245,240,232,.4);
+  font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;
+}
+.et-tab.active{color:#E8A857}
 </style>
 </head>
 <body>
@@ -200,6 +262,7 @@ button{font-family:inherit;}
       <div class="import-badge hidden" id="importBadge">
         <div class="import-badge-inner">
           <span>Modo importar</span>
+          <button id="btnEditImport" title="Decorar">✎</button>
           <button id="btnExitImport">✕</button>
         </div>
       </div>
@@ -218,6 +281,7 @@ button{font-family:inherit;}
     <div class="filter-strip" id="filterStrip"></div>
 
     <div class="shutter-row">
+      <button class="quick-edit-chip" id="quickEditChip">✎ Editar foto</button>
       <button class="gallery-thumb-btn" id="btnGalleryThumb">🎞️</button>
       <button class="shutter-btn" id="btnShutter"><span class="shutter-inner"></span></button>
       <div class="shutter-spacer"></div>
@@ -245,10 +309,42 @@ button{font-family:inherit;}
     <button class="icon-btn viewer-top" id="btnViewerClose">✕</button>
     <img id="viewerImg" src="" alt="Foto">
     <div class="viewer-controls">
+      <button class="vc-btn" id="btnViewerEdit">✎ Editar</button>
       <button class="vc-btn" id="btnViewerDownload">⬇ Descargar</button>
       <button class="vc-btn danger" id="btnViewerDelete">🗑 Eliminar</button>
     </div>
   </div>
+
+  <!-- ═══ EDITOR SCREEN (photodump decorator) ═══ -->
+  <section class="screen" data-screen="editor">
+    <div class="editor-header">
+      <button class="icon-btn" id="btnEditorClose">✕</button>
+      <div class="editor-title">Decorar</div>
+      <button class="icon-btn editor-save-btn" id="btnEditorSave">✓</button>
+    </div>
+    <div class="editor-stage" id="editorStage">
+      <canvas id="editorCanvas"></canvas>
+      <div class="sticker-handle sticker-handle-delete hidden" id="stickerHandleDelete">✕</div>
+      <div class="sticker-handle sticker-handle-transform hidden" id="stickerHandleTransform">⤡</div>
+    </div>
+    <div class="editor-panel">
+      <div class="ep-row" id="epStickers"></div>
+      <div class="ep-row" id="epInk"></div>
+      <div class="ep-row hidden" id="epFrame"></div>
+      <div class="ep-row hidden" id="epFilter"></div>
+      <div class="ep-row hidden" id="epCaption">
+        <input type="text" id="captionInput" maxlength="40" placeholder="ESCRIBE UNA FRASE...">
+        <button class="ep-caption-color active" data-color="#F5F0E8" style="background:#F5F0E8"></button>
+        <button class="ep-caption-color" data-color="#171310" style="background:#171310"></button>
+      </div>
+    </div>
+    <div class="editor-tabs">
+      <button class="et-tab active" data-tab="stickers">✎ Stickers</button>
+      <button class="et-tab" data-tab="frame">▢ Marco</button>
+      <button class="et-tab" data-tab="filter">◐ Filtro</button>
+      <button class="et-tab" data-tab="caption">Aa Texto</button>
+    </div>
+  </section>
 
   <input type="file" accept="image/*" id="fileInput" class="hidden">
 </div>
@@ -282,13 +378,20 @@ const importBadge = $('importBadge'), fileInput = $('fileInput');
 const galleryGrid = $('galleryGrid'), galleryEmpty = $('galleryEmpty'), galleryCount = $('galleryCount');
 const viewer = $('viewer'), viewerImg = $('viewerImg');
 const btnGalleryThumb = $('btnGalleryThumb'), btnFlash = $('btnFlash'), btnSwitchCam = $('btnSwitchCam');
+const quickEditChip = $('quickEditChip');
+const editorCanvas = $('editorCanvas'), editorCtx = editorCanvas.getContext('2d');
+const editorStage = $('editorStage');
+const handleDelete = $('stickerHandleDelete'), handleTransform = $('stickerHandleTransform');
+const captionInput = $('captionInput');
+const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), epFilterRow = $('epFilter'), epCaption = $('epCaption');
 
 /* ── STATE ───────────────────────────────────────────────── */
 let stream = null, currentFacing = 'environment', torchOn = false;
 let currentFilterIndex = 0, frameCount = 0, rafId = null, activeScreen = 'camera';
 let sourceIsVideo = true, currentSource = video;
 let overlays = {}, grainPattern = null, lastW = 0, lastH = 0, hasMultipleCams = false;
-let viewerPhotoId = null, viewerObjectUrl = null;
+let viewerPhotoId = null, viewerObjectUrl = null, viewerPhotoFilterName = null;
+let quickEditBlob = null, quickEditTimeout = null;
 
 const currentFilter = () => FILTERS[currentFilterIndex];
 
@@ -511,8 +614,17 @@ function capturePhoto(){
   flashPulse();
   canvas.toBlob(blob => {
     if(!blob) return;
-    addPhoto(blob, currentFilter().name).then(refreshGalleryThumb);
+    quickEditBlob = blob;
+    addPhoto(blob, currentFilter().name).then(() => {
+      refreshGalleryThumb();
+      showQuickEditChip();
+    });
   }, 'image/jpeg', 0.92);
+}
+function showQuickEditChip(){
+  quickEditChip.classList.add('show');
+  clearTimeout(quickEditTimeout);
+  quickEditTimeout = setTimeout(() => quickEditChip.classList.remove('show'), 4000);
 }
 
 /* ── FILTER STRIP UI ─────────────────────────────────────── */
@@ -573,6 +685,7 @@ async function refreshGalleryThumb(){
 function openViewer(photo, url){
   viewerPhotoId = photo.id;
   viewerObjectUrl = url;
+  viewerPhotoFilterName = photo.filterName;
   viewerImg.src = url;
   viewer.classList.remove('hidden');
 }
@@ -614,6 +727,453 @@ function exitImportMode(){
   else { startCamera(currentFacing); }
 }
 
+/* ── EDITOR: photodump decorator (stickers, marcos, texto) ─ */
+const INK_COLORS = ['#E2402C', '#F0CE55', '#F5F0E8', '#171310', '#D98BA5'];
+const BASE_RADIUS = 60;
+const jitter = range => (Math.random() - 0.5) * range;
+
+function strokeSmoothPath(c, pts, closed){
+  if(pts.length < 2) return;
+  c.beginPath();
+  c.moveTo(pts[0].x, pts[0].y);
+  for(let i = 1; i < pts.length - 1; i++){
+    const mx = (pts[i].x + pts[i+1].x) / 2, my = (pts[i].y + pts[i+1].y) / 2;
+    c.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+  }
+  const last = pts[pts.length - 1];
+  c.lineTo(last.x, last.y);
+  if(closed) c.closePath();
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  c.stroke();
+}
+function genRingPoints(radius, wobble, coverage, n){
+  const pts = [], start = -Math.PI/2 - 0.25, sweep = Math.PI * 2 * coverage;
+  for(let i = 0; i <= n; i++){
+    const ang = start + sweep * (i / n), r = radius + jitter(wobble);
+    pts.push({ x: Math.cos(ang) * r, y: Math.sin(ang) * r });
+  }
+  return pts;
+}
+function genBurstPoints(){
+  const spikes = 7, pts = [];
+  for(let i = 0; i < spikes * 2; i++){
+    const ang = (Math.PI * 2 * i) / (spikes * 2) - Math.PI / 2;
+    const outer = i % 2 === 0;
+    const r = outer ? BASE_RADIUS * (0.82 + Math.random() * 0.18) : BASE_RADIUS * (0.26 + Math.random() * 0.14);
+    pts.push({ x: Math.cos(ang) * r, y: Math.sin(ang) * r });
+  }
+  return pts;
+}
+function genCrossLines(){
+  const j = () => jitter(10);
+  return [
+    [{ x: -48+j(), y: -48+j() }, { x: -10+j(), y: -8+j() }, { x: 20+j(), y: 15+j() }, { x: 50+j(), y: 48+j() }],
+    [{ x: 48+j(), y: -46+j() }, { x: 8+j(), y: -6+j() }, { x: -18+j(), y: 18+j() }, { x: -50+j(), y: 50+j() }]
+  ];
+}
+function genSignaturePoints(){
+  const pts = [], n = 9;
+  for(let i = 0; i <= n; i++){
+    const x = -56 + (112 * i) / n;
+    const y = Math.sin(i * 1.3 + Math.random() * 0.5) * 22 + jitter(8);
+    pts.push({ x, y });
+  }
+  return pts;
+}
+function genSpiralRings(){
+  return [16, 29, 42, 55].map(r => genRingPoints(r, 5, 0.97, 26));
+}
+function genHeartPoints(){
+  const pts = [], n = 40;
+  for(let i = 0; i <= n; i++){
+    const t = (Math.PI * 2 * i) / n;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+    pts.push({ x: x * 2.6 + jitter(3), y: y * 2.6 + jitter(3) });
+  }
+  return pts;
+}
+const STICKER_DEFS = {
+  burst: {
+    makeGeo: genBurstPoints,
+    draw(c, color, geo){
+      c.beginPath();
+      geo.forEach((p, i) => i === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y));
+      c.closePath(); c.fillStyle = color; c.fill();
+    }
+  },
+  ring: {
+    makeGeo: () => genRingPoints(50, 7, 0.92, 30),
+    draw(c, color, geo){ c.strokeStyle = color; c.lineWidth = 7; strokeSmoothPath(c, geo, false); }
+  },
+  cross: {
+    makeGeo: genCrossLines,
+    draw(c, color, geo){ c.strokeStyle = color; c.lineWidth = 8; geo.forEach(line => strokeSmoothPath(c, line, false)); }
+  },
+  signature: {
+    makeGeo: genSignaturePoints,
+    draw(c, color, geo){ c.strokeStyle = color; c.lineWidth = 6; strokeSmoothPath(c, geo, false); }
+  },
+  spiral: {
+    makeGeo: genSpiralRings,
+    draw(c, color, geo){
+      c.strokeStyle = color; c.lineWidth = 5;
+      geo.forEach((ring, i) => { c.globalAlpha = 1 - i * 0.15; strokeSmoothPath(c, ring, false); });
+      c.globalAlpha = 1;
+    }
+  },
+  heart: {
+    makeGeo: genHeartPoints,
+    draw(c, color, geo){ c.strokeStyle = color; c.lineWidth = 6; strokeSmoothPath(c, geo, true); }
+  },
+  dot: {
+    makeGeo: () => 10 + Math.random() * 5,
+    draw(c, color, geo){ c.beginPath(); c.arc(0, 0, geo, 0, Math.PI*2); c.fillStyle = color; c.fill(); }
+  }
+};
+const STICKER_TYPES = ['burst', 'ring', 'cross', 'signature', 'spiral', 'heart', 'dot'];
+
+const FRAME_STYLES = {
+  none:  { label: 'Ninguno', bg: null,      padSide: 0,   padTop: 0,   padBottom: 0,    texture: false },
+  paper: { label: 'Papel',   bg: '#F2ECE1', padSide: .06, padTop: .06, padBottom: .16,  texture: true  },
+  red:   { label: 'Rojo',    bg: '#CF4430', padSide: .09, padTop: .09, padBottom: .09,  texture: false },
+  black: { label: 'Negro',   bg: '#141110', padSide: .08, padTop: .08, padBottom: .14,  texture: false },
+  cream: { label: 'Crema',   bg: '#E8E0CE', padSide: .07, padTop: .07, padBottom: .07,  texture: true  }
+};
+const FRAME_ORDER = ['none', 'paper', 'red', 'black', 'cream'];
+
+let editorState = null;
+let selectedStickerId = null, stickerSeq = 0;
+let currentInkColor = INK_COLORS[0];
+let editorDragMode = null, editorDragOffset = { x: 0, y: 0 };
+let editorReturnScreen = 'gallery';
+let editorTextureCache = {};
+
+function findFilterIndexByName(name){
+  const i = FILTERS.findIndex(f => f.name === name);
+  return i === -1 ? 0 : i;
+}
+function computeEditorCanvasSize(img){
+  const maxDim = 1200;
+  let w = img.naturalWidth || 800, h = img.naturalHeight || 800;
+  if(w >= h){ if(w > maxDim){ h = Math.round(h * maxDim / w); w = maxDim; } }
+  else { if(h > maxDim){ w = Math.round(w * maxDim / h); h = maxDim; } }
+  return { w, h };
+}
+function openEditor(imgEl, filterNameHint, returnScreen){
+  viewer.classList.add('hidden');
+  editorReturnScreen = returnScreen || 'gallery';
+  editorState = {
+    baseImage: imgEl,
+    frame: 'none',
+    filterIndex: findFilterIndexByName(filterNameHint),
+    stickers: [],
+    caption: { text: '', color: '#F5F0E8' }
+  };
+  selectedStickerId = null;
+  const size = computeEditorCanvasSize(imgEl);
+  editorCanvas.width = size.w; editorCanvas.height = size.h;
+  captionInput.value = '';
+  setCaptionColorUI('#F5F0E8');
+  setActiveFrameSwatch('none');
+  setActiveFilterChipEditor(editorState.filterIndex);
+  switchEditorTab('stickers');
+  showScreen('editor');
+  editorRender();
+  updateSelectionHandles();
+}
+function closeEditor(){
+  editorState = null;
+  selectedStickerId = null;
+  showScreen(editorReturnScreen);
+}
+function makeStaticTexture(w, h){
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const id = g.createImageData(w, h);
+  for(let i = 0; i < id.data.length; i += 4){
+    const v = 200 + ((Math.random() * 55) | 0);
+    id.data[i] = v; id.data[i+1] = v; id.data[i+2] = v; id.data[i+3] = 22;
+  }
+  g.putImageData(id, 0, 0);
+  return c;
+}
+function getEditorTexture(w, h){
+  const key = w + 'x' + h;
+  if(!editorTextureCache[key]) editorTextureCache[key] = makeStaticTexture(w, h);
+  return editorTextureCache[key];
+}
+function editorPhotoRect(frame, w, h){
+  if(!frame || !frame.bg) return { x: 0, y: 0, w, h };
+  const x = w * frame.padSide, y = h * frame.padTop;
+  return { x, y, w: w - 2*x, h: h - h*frame.padTop - h*frame.padBottom };
+}
+function editorRender(){
+  if(!editorState) return;
+  const w = editorCanvas.width, h = editorCanvas.height;
+  const frame = FRAME_STYLES[editorState.frame];
+  editorCtx.clearRect(0, 0, w, h);
+  if(frame && frame.bg){
+    editorCtx.fillStyle = frame.bg;
+    editorCtx.fillRect(0, 0, w, h);
+    if(frame.texture){
+      editorCtx.save();
+      editorCtx.globalCompositeOperation = 'overlay';
+      editorCtx.drawImage(getEditorTexture(w, h), 0, 0);
+      editorCtx.restore();
+    }
+  }
+  const rect = editorPhotoRect(frame, w, h);
+  const img = editorState.baseImage;
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if(iw && ih){
+    const irat = iw / ih, rrat = rect.w / rect.h;
+    let dw, dh, dx, dy;
+    if(irat > rrat){ dw = rect.w; dh = rect.w / irat; dx = rect.x; dy = rect.y + (rect.h - dh) / 2; }
+    else { dh = rect.h; dw = rect.h * irat; dy = rect.y; dx = rect.x + (rect.w - dw) / 2; }
+    editorCtx.save();
+    editorCtx.beginPath(); editorCtx.rect(rect.x, rect.y, rect.w, rect.h); editorCtx.clip();
+    editorCtx.filter = FILTERS[editorState.filterIndex].css;
+    editorCtx.drawImage(img, dx, dy, dw, dh);
+    editorCtx.filter = 'none';
+    editorCtx.restore();
+  }
+  editorState.stickers.forEach(s => {
+    editorCtx.save();
+    editorCtx.translate(s.x, s.y);
+    editorCtx.rotate(s.rotation);
+    editorCtx.scale(s.scale, s.scale);
+    STICKER_DEFS[s.type].draw(editorCtx, s.color, s.geo);
+    editorCtx.restore();
+  });
+  if(editorState.caption.text) drawEditorCaption(w, h, frame, editorState.caption);
+}
+function drawEditorCaption(w, h, frame, caption){
+  const c = editorCtx;
+  const fontSize = Math.max(12, Math.round(h * 0.024));
+  c.save();
+  c.font = '600 ' + fontSize + 'px "DM Mono", monospace';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  const text = caption.text.toUpperCase();
+  let cy;
+  if(frame && frame.padBottom >= 0.08){
+    cy = h - (h * frame.padBottom) / 2;
+    c.fillStyle = caption.color;
+  } else {
+    cy = h * 0.93;
+    const metrics = c.measureText(text);
+    c.fillStyle = 'rgba(0,0,0,.4)';
+    c.fillRect(w/2 - metrics.width/2 - 16, cy - fontSize*0.9, metrics.width + 32, fontSize * 1.8);
+    c.fillStyle = caption.color;
+  }
+  c.fillText(text, w/2, cy);
+  c.restore();
+}
+function addSticker(type){
+  const id = ++stickerSeq;
+  const w = editorCanvas.width, h = editorCanvas.height;
+  editorState.stickers.push({
+    id, type, color: currentInkColor,
+    x: w/2 + jitter(30), y: h/2 + jitter(30),
+    scale: Math.max(w, h) / 700,
+    rotation: jitter(0.3),
+    geo: STICKER_DEFS[type].makeGeo()
+  });
+  selectedStickerId = id;
+  editorRender();
+  updateSelectionHandles();
+}
+function getSelectedSticker(){
+  return editorState ? editorState.stickers.find(s => s.id === selectedStickerId) : null;
+}
+function deleteSelectedSticker(){
+  if(!editorState || selectedStickerId == null) return;
+  editorState.stickers = editorState.stickers.filter(s => s.id !== selectedStickerId);
+  selectedStickerId = null;
+  editorRender();
+  updateSelectionHandles();
+}
+function editorCanvasCoords(clientX, clientY){
+  const rect = editorCanvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) * (editorCanvas.width / rect.width),
+    y: (clientY - rect.top) * (editorCanvas.height / rect.height)
+  };
+}
+function localCorner(s, lx, ly){
+  const r = BASE_RADIUS * s.scale, rx = lx*r, ry = ly*r;
+  const cos = Math.cos(s.rotation), sin = Math.sin(s.rotation);
+  return { x: s.x + rx*cos - ry*sin, y: s.y + rx*sin + ry*cos };
+}
+function updateSelectionHandles(){
+  const s = getSelectedSticker();
+  if(!s){ handleDelete.classList.add('hidden'); handleTransform.classList.add('hidden'); return; }
+  const stageRect = editorStage.getBoundingClientRect();
+  const canvasRect = editorCanvas.getBoundingClientRect();
+  const scale = canvasRect.width / editorCanvas.width;
+  const offX = canvasRect.left - stageRect.left, offY = canvasRect.top - stageRect.top;
+  const tr = localCorner(s, 1, -1), br = localCorner(s, 1, 1);
+  handleDelete.style.left = (offX + tr.x * scale) + 'px';
+  handleDelete.style.top = (offY + tr.y * scale) + 'px';
+  handleTransform.style.left = (offX + br.x * scale) + 'px';
+  handleTransform.style.top = (offY + br.y * scale) + 'px';
+  handleDelete.classList.remove('hidden');
+  handleTransform.classList.remove('hidden');
+}
+function onEditorCanvasPointerDown(e){
+  if(!editorState) return;
+  editorCanvas.setPointerCapture && editorCanvas.setPointerCapture(e.pointerId);
+  const p = editorCanvasCoords(e.clientX, e.clientY);
+  let hit = null;
+  for(let i = editorState.stickers.length - 1; i >= 0; i--){
+    const s = editorState.stickers[i];
+    if(Math.hypot(p.x - s.x, p.y - s.y) < BASE_RADIUS * s.scale * 1.1){ hit = s; break; }
+  }
+  if(hit){
+    selectedStickerId = hit.id;
+    editorState.stickers = editorState.stickers.filter(s => s.id !== hit.id).concat(hit);
+    editorDragMode = 'move';
+    editorDragOffset = { x: p.x - hit.x, y: p.y - hit.y };
+  } else {
+    selectedStickerId = null;
+    editorDragMode = null;
+  }
+  editorRender();
+  updateSelectionHandles();
+}
+function onEditorCanvasPointerMove(e){
+  if(editorDragMode !== 'move') return;
+  const s = getSelectedSticker();
+  if(!s) return;
+  const p = editorCanvasCoords(e.clientX, e.clientY);
+  s.x = p.x - editorDragOffset.x;
+  s.y = p.y - editorDragOffset.y;
+  editorRender();
+  updateSelectionHandles();
+}
+function onEditorCanvasPointerUp(){ editorDragMode = null; }
+function onTransformHandlePointerDown(e){
+  e.stopPropagation();
+  if(!getSelectedSticker()) return;
+  editorDragMode = 'transform';
+  e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+}
+function onTransformHandlePointerMove(e){
+  if(editorDragMode !== 'transform') return;
+  const s = getSelectedSticker();
+  if(!s) return;
+  const p = editorCanvasCoords(e.clientX, e.clientY);
+  const dx = p.x - s.x, dy = p.y - s.y;
+  s.scale = Math.min(4, Math.max(0.3, Math.hypot(dx, dy) / (BASE_RADIUS * Math.SQRT2)));
+  s.rotation = Math.atan2(dy, dx) - Math.PI/4;
+  editorRender();
+  updateSelectionHandles();
+}
+function onTransformHandlePointerUp(){ editorDragMode = null; }
+function renderStickerPreview(mini, type, color){
+  const c = mini.getContext('2d');
+  c.clearRect(0, 0, 44, 44);
+  c.save(); c.translate(22, 22); c.scale(0.34, 0.34);
+  STICKER_DEFS[type].draw(c, color, STICKER_DEFS[type].makeGeo());
+  c.restore();
+}
+function refreshStickerPreviews(){
+  Array.from(epStickers.children).forEach((btn, i) => renderStickerPreview(btn._mini, STICKER_TYPES[i], currentInkColor));
+}
+function buildStickerTray(){
+  epStickers.innerHTML = '';
+  STICKER_TYPES.forEach(type => {
+    const btn = document.createElement('button');
+    btn.className = 'ep-sticker-btn';
+    const mini = document.createElement('canvas');
+    mini.width = 44; mini.height = 44;
+    renderStickerPreview(mini, type, currentInkColor);
+    btn.appendChild(mini);
+    btn.addEventListener('click', () => addSticker(type));
+    btn._mini = mini;
+    epStickers.appendChild(btn);
+  });
+  epInk.innerHTML = '';
+  INK_COLORS.forEach(color => {
+    const sw = document.createElement('button');
+    sw.className = 'ep-ink-swatch' + (color === currentInkColor ? ' active' : '');
+    sw.style.background = color;
+    sw.addEventListener('click', () => {
+      currentInkColor = color;
+      Array.from(epInk.children).forEach(el => el.classList.toggle('active', el === sw));
+      const sel = getSelectedSticker();
+      if(sel){ sel.color = color; editorRender(); }
+      refreshStickerPreviews();
+    });
+    epInk.appendChild(sw);
+  });
+}
+function setActiveFrameSwatch(key){
+  Array.from(epFrame.children).forEach(el => el.classList.toggle('active', el.dataset.key === key));
+}
+function buildFrameTray(){
+  epFrame.innerHTML = '';
+  FRAME_ORDER.forEach(key => {
+    const f = FRAME_STYLES[key];
+    const btn = document.createElement('button');
+    btn.className = 'ep-frame-swatch' + (key === 'none' ? ' active' : '');
+    btn.style.background = f.bg || 'repeating-linear-gradient(45deg,#222,#222 4px,#111 4px,#111 8px)';
+    btn.textContent = f.label;
+    btn.dataset.key = key;
+    btn.addEventListener('click', () => {
+      editorState.frame = key;
+      setActiveFrameSwatch(key);
+      editorRender();
+      updateSelectionHandles();
+    });
+    epFrame.appendChild(btn);
+  });
+}
+function setActiveFilterChipEditor(i){
+  Array.from(epFilterRow.children).forEach((el, idx) => el.classList.toggle('active', idx === i));
+}
+function buildFilterTrayEditor(){
+  epFilterRow.innerHTML = '';
+  FILTERS.forEach((f, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-chip';
+    btn.innerHTML = '<span class="fc-dot" style="background:' + f.dot + '"></span>' + f.name;
+    btn.addEventListener('click', () => {
+      editorState.filterIndex = i;
+      setActiveFilterChipEditor(i);
+      editorRender();
+    });
+    epFilterRow.appendChild(btn);
+  });
+}
+function setCaptionColorUI(color){
+  if(editorState) editorState.caption.color = color;
+  Array.from(epCaption.querySelectorAll('.ep-caption-color')).forEach(el => {
+    el.classList.toggle('active', el.dataset.color === color);
+  });
+}
+function switchEditorTab(tab){
+  ['stickers', 'frame', 'filter', 'caption'].forEach(t => {
+    document.querySelector('.et-tab[data-tab="' + t + '"]').classList.toggle('active', t === tab);
+  });
+  epStickers.classList.toggle('hidden', tab !== 'stickers');
+  epInk.classList.toggle('hidden', tab !== 'stickers');
+  epFrame.classList.toggle('hidden', tab !== 'frame');
+  epFilterRow.classList.toggle('hidden', tab !== 'filter');
+  epCaption.classList.toggle('hidden', tab !== 'caption');
+}
+function saveEditedPhoto(){
+  if(!editorState) return;
+  editorCanvas.toBlob(blob => {
+    if(!blob) return;
+    addPhoto(blob, 'EDITADO').then(() => {
+      refreshGalleryThumb();
+      closeEditor();
+      openGallery();
+    });
+  }, 'image/jpeg', 0.92);
+}
+
 /* ── EVENTS ──────────────────────────────────────────────── */
 function wireEvents(){
   $('btnShutter').addEventListener('click', capturePhoto);
@@ -645,8 +1205,46 @@ function wireEvents(){
   $('btnViewerClose').addEventListener('click', closeViewer);
   $('btnViewerDelete').addEventListener('click', deleteViewerPhoto);
   $('btnViewerDownload').addEventListener('click', downloadViewerPhoto);
+  $('btnViewerEdit').addEventListener('click', () => {
+    if(!viewerObjectUrl) return;
+    const img = new Image();
+    img.onload = () => openEditor(img, viewerPhotoFilterName, 'gallery');
+    img.src = viewerObjectUrl;
+  });
 
-  window.addEventListener('resize', () => resizeCanvas(false));
+  quickEditChip.addEventListener('click', () => {
+    if(!quickEditBlob) return;
+    const img = new Image();
+    img.onload = () => openEditor(img, currentFilter().name, 'camera');
+    img.src = URL.createObjectURL(quickEditBlob);
+    quickEditChip.classList.remove('show');
+  });
+  $('btnEditImport').addEventListener('click', () => {
+    if(!sourceIsVideo && currentSource) openEditor(currentSource, null, 'camera');
+  });
+
+  $('btnEditorClose').addEventListener('click', closeEditor);
+  $('btnEditorSave').addEventListener('click', saveEditedPhoto);
+  document.querySelectorAll('.et-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchEditorTab(tab.dataset.tab));
+  });
+  editorCanvas.addEventListener('pointerdown', onEditorCanvasPointerDown);
+  editorCanvas.addEventListener('pointermove', onEditorCanvasPointerMove);
+  editorCanvas.addEventListener('pointerup', onEditorCanvasPointerUp);
+  handleDelete.addEventListener('click', deleteSelectedSticker);
+  handleTransform.addEventListener('pointerdown', onTransformHandlePointerDown);
+  window.addEventListener('pointermove', onTransformHandlePointerMove);
+  window.addEventListener('pointerup', onTransformHandlePointerUp);
+  captionInput.addEventListener('input', () => {
+    if(!editorState) return;
+    editorState.caption.text = captionInput.value;
+    editorRender();
+  });
+  Array.from(epCaption.querySelectorAll('.ep-caption-color')).forEach(el => {
+    el.addEventListener('click', () => { setCaptionColorUI(el.dataset.color); editorRender(); });
+  });
+
+  window.addEventListener('resize', () => { resizeCanvas(false); if(editorState) updateSelectionHandles(); });
   document.addEventListener('visibilitychange', () => {
     if(document.hidden){ stopRenderLoop(); }
     else if(activeScreen === 'camera'){ renderLoop(); }
@@ -656,6 +1254,9 @@ function wireEvents(){
 /* ── INIT ────────────────────────────────────────────────── */
 async function init(){
   buildFilterStrip();
+  buildStickerTray();
+  buildFrameTray();
+  buildFilterTrayEditor();
   wireEvents();
   await detectMultipleCameras();
   await startCamera(currentFacing);
