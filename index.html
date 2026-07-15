@@ -469,6 +469,11 @@ let viewerPhotoId = null, viewerObjectUrl = null, viewerPhotoFilterName = null;
 let quickEditBlob = null, quickEditTimeout = null;
 let liveAdjust = { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 };
 let liveGrainOffset = { x: 0, y: 0 }, lastGrainUpdate = 0, liveGrainIndex = 0;
+let liveLumMask = null, lastLumMaskUpdate = 0;
+const lumSampleCanvas = document.createElement('canvas');
+const lumSampleCtx = lumSampleCanvas.getContext('2d', { willReadFrequently: true });
+const grainLayerCanvas = document.createElement('canvas');
+const grainLayerCtx = grainLayerCanvas.getContext('2d');
 
 const currentFilter = () => FILTERS[currentFilterIndex];
 
@@ -823,6 +828,36 @@ function preloadAllLuts(){
   FILTERS.forEach(f => { if(f.lut) ensureLutLoaded(f); });
 }
 
+/* ── LUMINANCE-MODULATED GRAIN ───────────────────────────────
+   Real film grain is more visible in shadows than in highlights (a
+   property of the emulsion, not a uniform overlay). Rather than read
+   every pixel of the full-resolution frame (expensive, and it would
+   have to run every frame for the live camera), the frame is
+   downsampled to a tiny canvas first — the browser's own image
+   smoothing does a cheap box-blur/average for free — then that
+   handful of pixels becomes a low-res luminance mask that gets
+   scaled back up (smoothed again on the way up, so no blockiness)
+   and used to attenuate the grain layer's alpha per region. ────── */
+function computeLuminanceMask(sourceCanvas, sx, sy, sw, sh){
+  const sampleW = 32, sampleH = Math.max(1, Math.round(sampleW * sh / sw));
+  lumSampleCanvas.width = sampleW; lumSampleCanvas.height = sampleH;
+  lumSampleCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
+  const id = lumSampleCtx.getImageData(0, 0, sampleW, sampleH);
+  const d = id.data;
+  for(let i = 0; i < d.length; i += 4){
+    const lum = (0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]) / 255;
+    // shadows (low lum) -> alpha near 1 (grain fully visible)
+    // highlights (high lum) -> alpha floored at .3, never fully grain-free
+    const visibility = clamp(1.15 - lum * 0.9, 0.3, 1.0);
+    d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = Math.round(visibility * 255);
+  }
+  lumSampleCtx.putImageData(id, 0, 0);
+  const mask = document.createElement('canvas');
+  mask.width = sampleW; mask.height = sampleH;
+  mask.getContext('2d').drawImage(lumSampleCanvas, 0, 0);
+  return mask;
+}
+
 /* ── SHARED POST-PROCESSING (used by live camera + editor) ─ */
 function applyPostEffects(c, w, h, f, ov, opts){
   opts = opts || {};
@@ -857,8 +892,6 @@ function applyPostEffects(c, w, h, f, ov, opts){
     }
   }
   if(f.grain > 0 && ov.grainPatterns && ov.grainPatterns.length){
-    c.save();
-    c.globalAlpha = f.grain; c.globalCompositeOperation = 'overlay';
     let pattern;
     if(opts.animate){
       // real film grain flickers a handful of times per second, not every 60fps
@@ -874,8 +907,35 @@ function applyPostEffects(c, w, h, f, ov, opts){
       const seedIdx = (opts.grainSeed && opts.grainSeed.index) || 0;
       pattern = ov.grainPatterns[seedIdx % ov.grainPatterns.length];
     }
-    c.fillStyle = pattern;
-    c.fillRect(0, 0, w, h);
+
+    // luminance mask: shadows get fuller grain, highlights get suppressed grain
+    const origin = opts.absOrigin || { x: 0, y: 0 };
+    let mask;
+    if(opts.animate){
+      const now = opts.time || 0;
+      if(!liveLumMask || now - lastLumMaskUpdate > 120){
+        liveLumMask = computeLuminanceMask(c.canvas, origin.x, origin.y, w, h);
+        lastLumMaskUpdate = now;
+      }
+      mask = liveLumMask;
+    } else if(opts.lumMaskCache){
+      if(!opts.lumMaskCache.mask) opts.lumMaskCache.mask = computeLuminanceMask(c.canvas, origin.x, origin.y, w, h);
+      mask = opts.lumMaskCache.mask;
+    } else {
+      mask = computeLuminanceMask(c.canvas, origin.x, origin.y, w, h);
+    }
+
+    grainLayerCanvas.width = w; grainLayerCanvas.height = h;
+    grainLayerCtx.clearRect(0, 0, w, h);
+    grainLayerCtx.fillStyle = pattern;
+    grainLayerCtx.fillRect(0, 0, w, h);
+    grainLayerCtx.globalCompositeOperation = 'destination-in';
+    grainLayerCtx.drawImage(mask, 0, 0, w, h);
+    grainLayerCtx.globalCompositeOperation = 'source-over';
+
+    c.save();
+    c.globalAlpha = f.grain; c.globalCompositeOperation = 'overlay';
+    c.drawImage(grainLayerCanvas, 0, 0);
     c.restore();
   }
 }
@@ -1272,7 +1332,8 @@ function openEditor(imgEl, filterNameHint, returnScreen){
     stickers: [],
     caption: { text: '', color: '#F5F0E8' },
     adjust: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 },
-    grainSeed: { index: Math.floor(Math.random() * 4) }
+    grainSeed: { index: Math.floor(Math.random() * 4) },
+    lumMaskCache: { mask: null }
   };
   selectedStickerId = null;
   const size = computeEditorCanvasSize(imgEl);
@@ -1358,7 +1419,10 @@ function editorRender(){
     }
     editorCtx.translate(rect.x, rect.y);
     const ov = getEditorOverlays(Math.round(rect.w), Math.round(rect.h));
-    applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPatterns: editorGrainPatterns }, { animate: false, grainSeed: editorState.grainSeed });
+    applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPatterns: editorGrainPatterns }, {
+      animate: false, grainSeed: editorState.grainSeed,
+      absOrigin: { x: rect.x, y: rect.y }, lumMaskCache: editorState.lumMaskCache
+    });
     editorCtx.restore();
   }
   editorState.stickers.forEach(s => {
@@ -1545,6 +1609,7 @@ function buildFrameTray(){
     btn.dataset.key = key;
     btn.addEventListener('click', () => {
       editorState.frame = key;
+      editorState.lumMaskCache.mask = null; // frame changes the photo rect size
       setActiveFrameSwatch(key);
       editorRender();
       updateSelectionHandles();
@@ -1563,6 +1628,7 @@ function buildFilterTrayEditor(){
     btn.innerHTML = '<span class="fc-dot" style="background:' + f.dot + '"></span>' + f.name;
     btn.addEventListener('click', () => {
       editorState.filterIndex = i;
+      editorState.lumMaskCache.mask = null; // new grade -> luminance distribution changes
       setActiveFilterChipEditor(i);
       if(f.lut) ensureLutLoaded(f);
       editorRender();
@@ -1590,6 +1656,8 @@ function buildAdjustTray(){
     input.addEventListener('input', () => {
       const v = parseInt(input.value, 10);
       editorState.adjust[def.key] = v;
+      // brightness/contrast/saturation/warmth all shift the graded luminance
+      if(def.key !== 'vignette' && def.key !== 'grain') editorState.lumMaskCache.mask = null;
       valEl.textContent = v;
       editorRender();
     });
