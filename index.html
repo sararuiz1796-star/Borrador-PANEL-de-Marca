@@ -464,11 +464,11 @@ const epStickers = $('epStickers'), epInk = $('epInk'), epFrame = $('epFrame'), 
 let stream = null, currentFacing = 'environment', torchOn = false;
 let currentFilterIndex = 0, frameCount = 0, rafId = null, activeScreen = 'camera';
 let sourceIsVideo = true, currentSource = video;
-let overlays = {}, grainPattern = null, lastW = 0, lastH = 0, hasMultipleCams = false;
+let overlays = {}, grainPatterns = null, lastW = 0, lastH = 0, hasMultipleCams = false;
 let viewerPhotoId = null, viewerObjectUrl = null, viewerPhotoFilterName = null;
 let quickEditBlob = null, quickEditTimeout = null;
 let liveAdjust = { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 };
-let liveGrainOffset = { x: 0, y: 0 }, lastGrainUpdate = 0;
+let liveGrainOffset = { x: 0, y: 0 }, lastGrainUpdate = 0, liveGrainIndex = 0;
 
 const currentFilter = () => FILTERS[currentFilterIndex];
 
@@ -581,7 +581,10 @@ function buildOverlays(w, h){
     white: makeLeak(w, h, 'rgba(255,255,255,.8)'),
     cyan:  makeLeak(w, h, 'rgba(120,220,255,.8)')
   };
-  grainPattern = ctx.createPattern(makeGrainTile(), 'repeat');
+  // several independent noise tiles, cycled through on flicker updates —
+  // repositioning a single tile reads as the grain "sliding" across the frame;
+  // swapping between genuinely different noise looks like real flicker instead
+  grainPatterns = Array.from({ length: 4 }, () => ctx.createPattern(makeGrainTile(), 'repeat'));
 }
 function makeVignette(w, h){
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -731,6 +734,10 @@ const lutGL = (function initLutGL(){
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, imageTex);
+      // WebGL's texture V=0 corresponds to row 0 of the uploaded source, but a
+      // full-screen quad sampled with uv=position*0.5+0.5 puts V=0 at the BOTTOM
+      // of the screen — without this flip the frame renders upside down
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
       // texSubImage2D reuses the existing texture storage (no realloc) when the
       // source size hasn't changed since last frame — noticeably cheaper per-frame
       // than texImage2D, which matters since this runs on every rendered frame
@@ -779,6 +786,9 @@ const lutGL = (function initLutGL(){
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      // this is raw tile-strip pixel data (not a DOM image source) — must NOT be
+      // Y-flipped, so explicitly clear the flag in case render() left it set
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, texW, texH, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
       return { texture: tex, size };
     }
@@ -846,24 +856,26 @@ function applyPostEffects(c, w, h, f, ov, opts){
       c.fillRect(0, Math.random() * h, w, 2 + Math.random() * 3); c.restore();
     }
   }
-  if(f.grain > 0 && ov.grainPattern){
+  if(f.grain > 0 && ov.grainPatterns && ov.grainPatterns.length){
     c.save();
     c.globalAlpha = f.grain; c.globalCompositeOperation = 'overlay';
-    let gx, gy;
+    let pattern;
     if(opts.animate){
-      // real film grain flickers a handful of times per second, not every 60fps frame —
-      // updating every frame reads as scrolling TV static/rain instead
+      // real film grain flickers a handful of times per second, not every 60fps
+      // frame — and swapping between a few genuinely different noise tiles (rather
+      // than sliding the same one to a new offset) reads as flicker, not scrolling
       const now = opts.time || 0;
       if(now - lastGrainUpdate > 90){
-        liveGrainOffset.x = Math.random() * 180; liveGrainOffset.y = Math.random() * 180;
+        liveGrainIndex = (liveGrainIndex + 1 + Math.floor(Math.random() * (ov.grainPatterns.length - 1))) % ov.grainPatterns.length;
         lastGrainUpdate = now;
       }
-      gx = liveGrainOffset.x; gy = liveGrainOffset.y;
+      pattern = ov.grainPatterns[liveGrainIndex];
+    } else {
+      const seedIdx = (opts.grainSeed && opts.grainSeed.index) || 0;
+      pattern = ov.grainPatterns[seedIdx % ov.grainPatterns.length];
     }
-    else { gx = (opts.grainSeed && opts.grainSeed.x) || 0; gy = (opts.grainSeed && opts.grainSeed.y) || 0; }
-    c.translate(gx, gy);
-    c.fillStyle = ov.grainPattern;
-    c.fillRect(-180, -180, w + 360, h + 360);
+    c.fillStyle = pattern;
+    c.fillRect(0, 0, w, h);
     c.restore();
   }
 }
@@ -909,7 +921,7 @@ function drawFrame(time){
     ctx.restore();
   }
 
-  applyPostEffects(ctx, w, h, f, { vignette: overlays.vignette, scanlines: overlays.scanlines, leaks: overlays.leaks, grainPattern }, { animate: true, time, frameCount });
+  applyPostEffects(ctx, w, h, f, { vignette: overlays.vignette, scanlines: overlays.scanlines, leaks: overlays.leaks, grainPatterns }, { animate: true, time, frameCount });
   frameCount++;
 }
 function renderLoop(time){
@@ -1200,7 +1212,7 @@ let editorDragMode = null, editorDragOffset = { x: 0, y: 0 };
 let editorReturnScreen = 'gallery';
 let editorTextureCache = {};
 let editorOverlayCache = {};
-let editorGrainPattern = null;
+let editorGrainPatterns = null;
 
 function clamp(v, lo, hi){ return Math.min(hi, Math.max(lo, v)); }
 function adjustCss(adjust){
@@ -1260,12 +1272,12 @@ function openEditor(imgEl, filterNameHint, returnScreen){
     stickers: [],
     caption: { text: '', color: '#F5F0E8' },
     adjust: { brightness: 0, contrast: 0, saturation: 0, warmth: 0, vignette: 0, grain: 0 },
-    grainSeed: { x: Math.random() * 180, y: Math.random() * 180 }
+    grainSeed: { index: Math.floor(Math.random() * 4) }
   };
   selectedStickerId = null;
   const size = computeEditorCanvasSize(imgEl);
   editorCanvas.width = size.w; editorCanvas.height = size.h;
-  editorGrainPattern = editorCtx.createPattern(makeGrainTile(), 'repeat');
+  editorGrainPatterns = Array.from({ length: 4 }, () => editorCtx.createPattern(makeGrainTile(), 'repeat'));
   captionInput.value = '';
   setCaptionColorUI('#F5F0E8');
   setActiveFrameSwatch('none');
@@ -1346,7 +1358,7 @@ function editorRender(){
     }
     editorCtx.translate(rect.x, rect.y);
     const ov = getEditorOverlays(Math.round(rect.w), Math.round(rect.h));
-    applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPattern: editorGrainPattern }, { animate: false, grainSeed: editorState.grainSeed });
+    applyPostEffects(editorCtx, rect.w, rect.h, effFilter, { ...ov, grainPatterns: editorGrainPatterns }, { animate: false, grainSeed: editorState.grainSeed });
     editorCtx.restore();
   }
   editorState.stickers.forEach(s => {
